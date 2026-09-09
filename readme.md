@@ -78,6 +78,11 @@ library is used; configuration is validated and the regex compiled at startup.
 Tests cover host normalization, custom configuration, spoofed headers, nonmatches,
 invalid configuration, and downstream behavior under both Go and Yaegi.
 
+`make yaegi_test` creates a temporary GOPATH and links this checkout at the module
+path from `go.mod`, then removes the temporary directory on exit. Yaegi resolves
+test imports through GOPATH, so this also works in forks whose checkout path does
+not match the module name, without changing your existing GOPATH.
+
 ## Nix development environment
 
 With Nix flakes enabled, enter the pinned development shell:
