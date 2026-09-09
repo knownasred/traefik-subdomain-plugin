@@ -14,24 +14,20 @@ func TestTenant(t *testing.T) {
 		{"alice.app.kepa.ch", "alice"},
 		{"team-42.app.kepa.ch:443", "team-42"},
 		{"ALICE.APP.KEPA.CH.:443", "alice"},
-		{"app.kepa.ch", ""}, {".app.kepa.ch", ""},
-		{"a.b.app.kepa.ch", ""}, {"alice.app.kepa.ch.evil.test", ""},
-		{"elsewhere.test", ""}, {"[::1]:443", ""}, {"", ""},
+		{"app.kepa.ch", ""},
+		{".app.kepa.ch", ""},
+		{"a.b.app.kepa.ch", ""},
+		{"alice.app.kepa.ch.evil.test", ""},
+		{"elsewhere.test", ""},
+		{"[::1]:443", ""},
+		{"", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.host, func(t *testing.T) {
 			called := false
 			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				called = true
-				if got := r.Header.Get("X-Tenant"); got != tc.want {
-					t.Errorf("tenant = %q, want %q", got, tc.want)
-				}
-				if tc.want == "" && len(r.Header.Values("X-Tenant")) != 0 {
-					t.Error("unmatched header should be omitted")
-				}
-				if _, ok := r.Header["x-tenant"]; ok {
-					t.Error("noncanonical spoofed header survived")
-				}
+				assertTenantHeader(t, r.Header, tc.want)
 				if r.URL.RequestURI() != "/api/item?q=1" || r.Host != tc.host {
 					t.Error("request host or URL changed")
 				}
@@ -52,6 +48,20 @@ func TestTenant(t *testing.T) {
 				t.Fatal("downstream handler not preserved")
 			}
 		})
+	}
+}
+
+func assertTenantHeader(t *testing.T, header http.Header, want string) {
+	t.Helper()
+	if got := header.Get("X-Tenant"); got != want {
+		t.Errorf("tenant = %q, want %q", got, want)
+	}
+	if want == "" && len(header.Values("X-Tenant")) != 0 {
+		t.Error("unmatched header should be omitted")
+	}
+	// Inspect the raw map: Header.Get would hide a noncanonical spoofed key.
+	if _, ok := map[string][]string(header)["x-tenant"]; ok {
+		t.Error("noncanonical spoofed header survived")
 	}
 }
 
