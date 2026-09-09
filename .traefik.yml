@@ -1,12 +1,9 @@
-displayName: Demo Plugin
+displayName: KEPA Tenant Header
 type: middleware
 iconPath: .assets/icon.png
-
 import: github.com/traefik/plugindemo
-
-summary: '[Demo] Add Request Header'
-
+summary: Extract a tenant from the request host into a configurable upstream header.
 testData:
-  Headers:
-    X-Demo: test
-    X-URL: '{{URL}}'
+  hostRegex: '^([^.]+)\.app\.kepa\.ch$'
+  headerName: X-Tenant
+  captureGroup: 1

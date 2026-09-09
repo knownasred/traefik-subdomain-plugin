@@ -1,270 +1,101 @@
-This repository includes an example plugin, `demo`, for you to use as a reference for developing your own plugins.
+# KEPA tenant header middleware
 
-[![Build Status](https://github.com/traefik/plugindemo/workflows/Main/badge.svg?branch=master)](https://github.com/traefik/plugindemo/actions)
+A dependency-free Go/Yaegi middleware for Traefik. It replaces the NGINX
+`configuration-snippet`: `alice.app.kepa.ch` becomes `X-Tenant: alice` upstream.
 
-The existing plugins can be browsed into the [Plugin Catalog](https://plugins.traefik.io).
-
-# Developing a Traefik plugin
-
-[Traefik](https://traefik.io) plugins are developed using the [Go language](https://golang.org).
-
-A [Traefik](https://traefik.io) middleware plugin is just a [Go package](https://golang.org/ref/spec#Packages) that provides an `http.Handler` to perform specific processing of requests and responses.
-
-Rather than being pre-compiled and linked, however, plugins are executed on the fly by [Yaegi](https://github.com/traefik/yaegi), an embedded Go interpreter.
-
-## Usage
-
-For a plugin to be active for a given Traefik instance, it must be declared in the static configuration.
-
-Plugins are parsed and loaded exclusively during startup, which allows Traefik to check the integrity of the code and catch errors early on.
-If an error occurs during loading, the plugin is disabled.
-
-For security reasons, it is not possible to start a new plugin or modify an existing one while Traefik is running.
-
-Once loaded, middleware plugins behave exactly like statically compiled middlewares.
-Their instantiation and behavior are driven by the dynamic configuration.
-
-Plugin dependencies must be [vendored](https://golang.org/ref/mod#vendoring) for each plugin.
-Vendored packages should be included in the plugin's GitHub repository. ([Go modules](https://blog.golang.org/using-go-modules) are not supported.)
-
-### Configuration
-
-For each plugin, the Traefik static configuration must define the module name (as is usual for Go packages).
-
-The following declaration (given here in YAML) defines a plugin:
+## Configuration
 
 ```yaml
-# Static configuration
-
-experimental:
-  plugins:
-    example:
-      moduleName: github.com/traefik/plugindemo
-      version: v0.2.1
+spec:
+  plugin:
+    kepaTenant:
+      hostRegex: '^([^.]+)\.app\.kepa\.ch$'
+      headerName: X-Tenant
+      captureGroup: 1
 ```
 
-Here is an example of a file provider dynamic configuration (given here in YAML), where the interesting part is the `http.middlewares` section:
+These are the defaults. `captureGroup` is a positive, 1-based regex capture index.
+Invalid regexes, capture indices, and header names fail at startup. `Host` cannot
+be the destination header. Use Go regex syntax; anchor patterns to the whole host.
 
-```yaml
-# Dynamic configuration
+The middleware reads the request Host, removes its port, lowercases it, and strips
+a trailing DNS dot. It ignores `X-Forwarded-Host`. It overwrites incoming tenant
+headers; for unmatched hosts or empty captures it removes the header, matching
+NGINX's empty `proxy_set_header` behavior. Other request fields and the response
+pass through unchanged. Attach it before authentication middleware that consumes
+the tenant header. Applications must still authorize access to the selected tenant.
 
-http:
-  routers:
-    my-router:
-      rule: host(`demo.localhost`)
-      service: service-foo
-      entryPoints:
-        - web
-      middlewares:
-        - my-plugin
+## NGINX migration
 
-  services:
-   service-foo:
-      loadBalancer:
-        servers:
-          - url: http://127.0.0.1:5000
-  
-  middlewares:
-    my-plugin:
-      plugin:
-        example:
-          headers:
-            Foo: Bar
+| NGINX annotation | Traefik configuration |
+| --- | --- |
+| `proxy-body-size: "256m"` | Native `buffering.maxRequestBodyBytes: 268435456` |
+| `proxy-buffering: "on"` | Native Buffering middleware, with different buffering behavior |
+| `proxy-buffer-size: "32k"` | No direct equivalent. NGINX sizes the first upstream response buffer, including headers; Traefik's `memResponseBodyBytes` controls when response bodies spill to disk. |
+| `server-alias: "*.app.kepa.ch"` | Router `HostRegexp` for a single subdomain; configure DNS and TLS separately |
+| `rewrite-target: /$2` | Native `replacePathRegex`, using the original path regex and replacement `/${2}` |
+| `configuration-snippet` | This plugin |
+
+The original Ingress path was not provided. The example assumes `/api(/|$)(.*)`,
+so `/api/items` becomes `/items`. Replace both the rewrite regex and router path
+match with your actual path, or omit rewriting if unnecessary. Add any original
+non-wildcard hosts to the router separately.
+
+Traefik buffers whole bodies and can spill to disk. Provision temporary disk for
+concurrent uploads/responses and review buffering for streaming endpoints.
+The sample retains 1 MiB memory thresholds; `32k` is not an equivalent setting.
+
+References: [Buffering](https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/buffering/),
+[ReplacePathRegex](https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/replacepathregex/),
+[plugin installation](https://plugins.traefik.io/install).
+
+## Installation
+
+This checkout retains the template module path `github.com/traefik/plugindemo`.
+Use the local installation below. Downloading that upstream module would install
+the original demo, not this plugin.
+
+1. Mount this checkout at `/plugins-local/src/github.com/traefik/plugindemo` in
+   the Traefik container, with Traefik's working directory set to `/`.
+2. Merge [examples/traefik-static.yml](examples/traefik-static.yml) into Traefik's
+   static configuration and restart it. The plugin key is `kepaTenant`.
+3. Install Traefik's Kubernetes CRDs and enable the CRD provider with appropriate
+   RBAC. The examples use Traefik v3 rule syntax.
+4. Edit [examples/kubernetes.yml](examples/kubernetes.yml) for your namespace,
+   Service, port, path, entry point, and TLS secret, then run
+   `kubectl apply -f examples/kubernetes.yml`.
+
+For remote installation, change `go.mod`, test imports, `.traefik.yml`, and example
+module paths to your actual repository. Publish a version tag and configure
+`experimental.plugins.kepaTenant` with that moduleName and version instead of
+`experimental.localPlugins`. See the plugin installation reference for catalog
+requirements. Nothing has been published or deployed by this change.
+
+## Development
+
+Implementation: `demo.go` (retaining the template filename). Only the standard
+library is used; configuration is validated and the regex compiled at startup.
+Tests cover host normalization, custom configuration, spoofed headers, nonmatches,
+invalid configuration, and downstream behavior under both Go and Yaegi.
+
+## Nix development environment
+
+With Nix flakes enabled, enter the pinned development shell:
+
+```sh
+nix develop
+make test
+make yaegi_test
 ```
 
-### Local Mode
+The shell provides Go, Yaegi, gopls, and GNU Make from nixpkgs 26.05 on Linux
+(x86_64 and aarch64). Yaegi is marked broken on macOS in nixpkgs.
+Run `nix flake check` to execute both test targets in an isolated Nix build.
+Go uses the toolchain pinned by `flake.lock`, with CGO disabled to match CI.
+The shell creates an ignored `.nix-go/` GOPATH with a link to this checkout
+so Yaegi can resolve the plugin's imports from any checkout location.
+The legacy golangci-lint configuration is not included in this shell;
+`make lint` requires a separate compatible installation.
 
-Traefik also offers a developer mode that can be used for temporary testing of plugins not hosted on GitHub.
-To use a plugin in local mode, the Traefik static configuration must define the module name (as is usual for Go packages) and a path to a [Go workspace](https://golang.org/doc/gopath_code.html#Workspaces), which can be the local GOPATH or any directory.
-
-The plugins must be placed in `./plugins-local` directory,
-which should be in the working directory of the process running the Traefik binary.
-The source code of the plugin should be organized as follows:
-
-```
-./plugins-local/
-    └── src
-        └── github.com
-            └── traefik
-                └── plugindemo
-                    ├── demo.go
-                    ├── demo_test.go
-                    ├── go.mod
-                    ├── LICENSE
-                    ├── Makefile
-                    └── readme.md
-```
-
-```yaml
-# Static configuration
-
-experimental:
-  localPlugins:
-    example:
-      moduleName: github.com/traefik/plugindemo
-```
-
-(In the above example, the `plugindemo` plugin will be loaded from the path `./plugins-local/src/github.com/traefik/plugindemo`.)
-
-```yaml
-# Dynamic configuration
-
-http:
-  routers:
-    my-router:
-      rule: host(`demo.localhost`)
-      service: service-foo
-      entryPoints:
-        - web
-      middlewares:
-        - my-plugin
-
-  services:
-   service-foo:
-      loadBalancer:
-        servers:
-          - url: http://127.0.0.1:5000
-  
-  middlewares:
-    my-plugin:
-      plugin:
-        example:
-          headers:
-            Foo: Bar
-```
-
-## Defining a Plugin
-
-A plugin package must define the following exported Go objects:
-
-- A type `type Config struct { ... }`. The struct fields are arbitrary.
-- A function `func CreateConfig() *Config`.
-- A function `func New(ctx context.Context, next http.Handler, config *Config, name string) (http.Handler, error)`.
-
-```go
-// Package example a example plugin.
-package example
-
-import (
-	"context"
-	"net/http"
-)
-
-// Config the plugin configuration.
-type Config struct {
-	// ...
-}
-
-// CreateConfig creates the default plugin configuration.
-func CreateConfig() *Config {
-	return &Config{
-		// ...
-	}
-}
-
-// Example a plugin.
-type Example struct {
-	next     http.Handler
-	name     string
-	// ...
-}
-
-// New created a new plugin.
-func New(ctx context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
-	// ...
-	return &Example{
-		// ...
-	}, nil
-}
-
-func (e *Example) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	// ...
-	e.next.ServeHTTP(rw, req)
-}
-```
-
-## Logs
-
-Currently, the only way to send logs to Traefik is to use `os.Stdout.WriteString("...")` or `os.Stderr.WriteString("...")`.
-
-In the future, we will try to provide something better and based on levels.
-
-## Plugins Catalog
-
-Traefik plugins are stored and hosted as public GitHub repositories.
-
-Once a day, the Plugins Catalog online service polls Github to find plugins and add them to its catalog.
-
-### Prerequisites
-
-To be recognized by Plugins Catalog, your repository must meet the following criteria:
-
-- The `traefik-plugin` topic must be set.
-- The `.traefik.yml` manifest must exist, and be filled with valid contents.
-
-If your repository fails to meet either of these prerequisites, Plugins Catalog will not see it.
-
-### Manifest
-
-A manifest is also mandatory, and it should be named `.traefik.yml` and stored at the root of your project.
-
-This YAML file provides Plugins Catalog with information about your plugin, such as a description, a full name, and so on.
-
-Here is an example of a typical `.traefik.yml`file:
-
-```yaml
-# The name of your plugin as displayed in the Plugins Catalog web UI.
-displayName: Name of your plugin
-
-# For now, `middleware` is the only type available.
-type: middleware
-
-# The import path of your plugin.
-import: github.com/username/my-plugin
-
-# A brief description of what your plugin is doing.
-summary: Description of what my plugin is doing
-
-# Medias associated to the plugin (optional)
-iconPath: foo/icon.png
-bannerPath: foo/banner.png
-
-# Configuration data for your plugin.
-# This is mandatory,
-# and Plugins Catalog will try to execute the plugin with the data you provide as part of its startup validity tests.
-testData:
-  Headers:
-    Foo: Bar
-```
-
-Properties include:
-
-- `displayName` (required): The name of your plugin as displayed in the Plugins Catalog web UI.
-- `type` (required): For now, `middleware` is the only type available.
-- `import` (required): The import path of your plugin.
-- `summary` (required): A brief description of what your plugin is doing.
-- `testData` (required): Configuration data for your plugin. This is mandatory, and Plugins Catalog will try to execute the plugin with the data you provide as part of its startup validity tests.
-- `iconPath` (optional): A local path in the repository to the icon of the project.
-- `bannerPath` (optional): A local path in the repository to the image that will be used when you will share your plugin page in social medias.
-
-There should also be a `go.mod` file at the root of your project. Plugins Catalog will use this file to validate the name of the project.
-
-### Tags and Dependencies
-
-Plugins Catalog gets your sources from a Go module proxy, so your plugins need to be versioned with a git tag.
-
-Last but not least, if your plugin middleware has Go package dependencies, you need to vendor them and add them to your GitHub repository.
-
-If something goes wrong with the integration of your plugin, Plugins Catalog will create an issue inside your Github repository and will stop trying to add your repo until you close the issue.
-
-## Troubleshooting
-
-If Plugins Catalog fails to recognize your plugin, you will need to make one or more changes to your GitHub repository.
-
-In order for your plugin to be successfully imported by Plugins Catalog, consult this checklist:
-
-- The `traefik-plugin` topic must be set on your repository.
-- There must be a `.traefik.yml` file at the root of your project describing your plugin, and it must have a valid `testData` property for testing purposes.
-- There must be a valid `go.mod` file at the root of your project.
-- Your plugin must be versioned with a git tag.
-- If you have package dependencies, they must be vendored and added to your GitHub repository.
+When adding these files to Git, include both `flake.nix` and `flake.lock`
+so Nix can discover the flake and reproduce its dependencies.

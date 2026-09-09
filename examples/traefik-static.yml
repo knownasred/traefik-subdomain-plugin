@@ -1,0 +1,8 @@
+# Mount this checkout at /plugins-local/src/github.com/traefik/plugindemo
+# in the Traefik container, then merge these settings into its static config.
+experimental:
+  localPlugins:
+    kepaTenant:
+      moduleName: github.com/traefik/plugindemo
+providers:
+  kubernetesCRD: {}

@@ -1,66 +1,87 @@
-// Package plugindemo a demo plugin.
+// Package plugindemo extracts a tenant from the request host for upstream services.
 package plugindemo
 
 import (
-	"bytes"
 	"context"
 	"fmt"
+	"net"
 	"net/http"
-	"text/template"
+	"regexp"
+	"strings"
 )
 
-// Config the plugin configuration.
+// Config controls host matching and the upstream tenant header.
 type Config struct {
-	Headers map[string]string `json:"headers,omitempty"`
+	HostRegex    string `json:"hostRegex,omitempty"`
+	HeaderName   string `json:"headerName,omitempty"`
+	CaptureGroup int    `json:"captureGroup,omitempty"`
 }
 
-// CreateConfig creates the default plugin configuration.
+// CreateConfig returns defaults equivalent to the KEPA NGINX snippet.
 func CreateConfig() *Config {
-	return &Config{
-		Headers: make(map[string]string),
+	return &Config{HostRegex: `^([^.]+)\.app\.kepa\.ch$`, HeaderName: "X-Tenant", CaptureGroup: 1}
+}
+
+// Tenant sets a request header from a configured host capture group.
+type Tenant struct {
+	next         http.Handler
+	hostRegex    *regexp.Regexp
+	headerName   string
+	captureGroup int
+}
+
+// New validates configuration once, when Traefik constructs the middleware.
+func New(_ context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
+	if config == nil {
+		return nil, fmt.Errorf("%s: configuration is required", name)
 	}
-}
-
-// Demo a Demo plugin.
-type Demo struct {
-	next     http.Handler
-	headers  map[string]string
-	name     string
-	template *template.Template
-}
-
-// New created a new Demo plugin.
-func New(ctx context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
-	if len(config.Headers) == 0 {
-		return nil, fmt.Errorf("headers cannot be empty")
+	if config.HostRegex == "" {
+		return nil, fmt.Errorf("%s: hostRegex is required", name)
 	}
-
-	return &Demo{
-		headers:  config.Headers,
-		next:     next,
-		name:     name,
-		template: template.New("demo").Delims("[[", "]]"),
-	}, nil
+	re, err := regexp.Compile(config.HostRegex)
+	if err != nil {
+		return nil, fmt.Errorf("%s: invalid hostRegex: %w", name, err)
+	}
+	if config.CaptureGroup < 1 || config.CaptureGroup > re.NumSubexp() {
+		return nil, fmt.Errorf("%s: captureGroup must be between 1 and %d", name, re.NumSubexp())
+	}
+	if !validHeaderName(config.HeaderName) || strings.EqualFold(config.HeaderName, "Host") {
+		return nil, fmt.Errorf("%s: headerName must be a valid HTTP header name other than Host", name)
+	}
+	return &Tenant{next: next, hostRegex: re, headerName: http.CanonicalHeaderKey(config.HeaderName), captureGroup: config.CaptureGroup}, nil
 }
 
-func (a *Demo) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	for key, value := range a.headers {
-		tmpl, err := a.template.Parse(value)
-		if err != nil {
-			http.Error(rw, err.Error(), http.StatusInternalServerError)
-			return
+func validHeaderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, c := range name {
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("!#$%&'*+-.^_`|~", c) {
+			continue
 		}
-
-		writer := &bytes.Buffer{}
-
-		err = tmpl.Execute(writer, req)
-		if err != nil {
-			http.Error(rw, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		req.Header.Set(key, writer.String())
+		return false
 	}
+	return true
+}
 
-	a.next.ServeHTTP(rw, req)
+// ServeHTTP overwrites untrusted tenant headers and omits the header on no match.
+func (t *Tenant) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	host := req.Host
+	if hostname, _, err := net.SplitHostPort(host); err == nil {
+		host = hostname
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	// Delete even noncanonical keys introduced by an earlier middleware.
+	for key := range req.Header {
+		if strings.EqualFold(key, t.headerName) {
+			delete(req.Header, key)
+		}
+	}
+	if match := t.hostRegex.FindStringSubmatch(host); match != nil && match[t.captureGroup] != "" {
+		if req.Header == nil {
+			req.Header = make(http.Header)
+		}
+		req.Header.Set(t.headerName, match[t.captureGroup])
+	}
+	t.next.ServeHTTP(rw, req)
 }

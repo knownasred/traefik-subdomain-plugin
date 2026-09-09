@@ -1,0 +1,56 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: kepa-tenant
+  namespace: default
+spec:
+  plugin:
+    kepaTenant:
+      hostRegex: '^([^.]+)\.app\.kepa\.ch$'
+      headerName: X-Tenant
+      captureGroup: 1
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: kepa-buffering
+  namespace: default
+spec:
+  buffering:
+    maxRequestBodyBytes: 268435456 # 256 MiB
+    # Body memory thresholds; NOT equivalents of NGINX proxy-buffer-size.
+    memRequestBodyBytes: 1048576
+    memResponseBodyBytes: 1048576
+---
+# Example ONLY: assumes the original Ingress path was /api(/|$)(.*).
+# Replace both this regex and the route's path match with your actual path.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: kepa-rewrite
+  namespace: default
+spec:
+  replacePathRegex:
+    regex: '^/api(/|$)(.*)'
+    replacement: '/${2}'
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: kepa-app
+  namespace: default
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: 'HostRegexp(`^[^.]+\.app\.kepa\.ch$`) && (Path(`/api`) || PathPrefix(`/api/`))'
+      middlewares:
+        - name: kepa-tenant
+        - name: kepa-buffering
+        - name: kepa-rewrite
+      services:
+        - name: app # Replace with your Kubernetes Service.
+          port: 80
+  tls:
+    secretName: app-kepa-ch-tls # Existing wildcard certificate secret.
