@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/traefik/plugindemo"
+	plugindemo "github.com/knownasred/traefik-subdomain-plugin"
 )
 
 func TestTenant(t *testing.T) {

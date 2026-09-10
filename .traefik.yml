@@ -1,7 +1,7 @@
 displayName: KEPA Tenant Header
 type: middleware
 iconPath: .assets/icon.png
-import: github.com/traefik/plugindemo
+import: github.com/knownasred/traefik-subdomain-plugin
 summary: Extract a tenant from the request host into a configurable upstream header.
 testData:
   hostRegex: '^([^.]+)\.app\.kepa\.ch$'

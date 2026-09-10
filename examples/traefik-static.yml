@@ -1,8 +1,8 @@
-# Mount this checkout at /plugins-local/src/github.com/traefik/plugindemo
+# Mount this checkout at /plugins-local/src/github.com/knownasred/traefik-subdomain-plugin
 # in the Traefik container, then merge these settings into its static config.
 experimental:
   localPlugins:
     kepaTenant:
-      moduleName: github.com/traefik/plugindemo
+      moduleName: github.com/knownasred/traefik-subdomain-plugin
 providers:
   kubernetesCRD: {}
