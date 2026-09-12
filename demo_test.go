@@ -1,4 +1,4 @@
-package plugindemo_test
+package traefik_subdomain_plugin_test
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	plugindemo "github.com/knownasred/traefik-subdomain-plugin"
+	"github.com/knownasred/traefik-subdomain-plugin"
 )
 
 func TestTenant(t *testing.T) {
@@ -33,7 +33,7 @@ func TestTenant(t *testing.T) {
 				}
 				w.WriteHeader(http.StatusAccepted)
 			})
-			handler, err := plugindemo.New(context.Background(), next, plugindemo.CreateConfig(), "tenant")
+			handler, err := traefik_subdomain_plugin.New(context.Background(), next, traefik_subdomain_plugin.CreateConfig(), "tenant")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -66,11 +66,11 @@ func assertTenantHeader(t *testing.T, header http.Header, want string) {
 }
 
 func TestCustomConfig(t *testing.T) {
-	cfg := plugindemo.CreateConfig()
+	cfg := traefik_subdomain_plugin.CreateConfig()
 	cfg.HostRegex = `^(dev|prod)-([^.]+)\.example\.org$`
 	cfg.CaptureGroup = 2
 	cfg.HeaderName = "X-Account"
-	handler, err := plugindemo.New(context.Background(), http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+	handler, err := traefik_subdomain_plugin.New(context.Background(), http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Account") != "acme" {
 			t.Errorf("unexpected headers: %v", r.Header)
 		}
@@ -86,7 +86,7 @@ func TestCustomConfig(t *testing.T) {
 }
 
 func TestInvalidConfig(t *testing.T) {
-	cases := []*plugindemo.Config{
+	cases := []*traefik_subdomain_plugin.Config{
 		nil,
 		{HostRegex: "[", HeaderName: "X-Tenant", CaptureGroup: 1},
 		{HostRegex: "", HeaderName: "X-Tenant", CaptureGroup: 1},
@@ -96,10 +96,10 @@ func TestInvalidConfig(t *testing.T) {
 		{HostRegex: "(.*)", HeaderName: "X-Tenant", CaptureGroup: 2},
 	}
 	for _, header := range []string{"", "Bad Header", "Bad:Header", "X\r\nInjected", "Höst", "Host"} {
-		cases = append(cases, &plugindemo.Config{HostRegex: "(.*)", HeaderName: header, CaptureGroup: 1})
+		cases = append(cases, &traefik_subdomain_plugin.Config{HostRegex: "(.*)", HeaderName: header, CaptureGroup: 1})
 	}
 	for _, cfg := range cases {
-		if _, err := plugindemo.New(context.Background(), http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), cfg, "bad"); err == nil {
+		if _, err := traefik_subdomain_plugin.New(context.Background(), http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), cfg, "bad"); err == nil {
 			t.Errorf("accepted invalid config: %+v", cfg)
 		}
 	}

@@ -1,5 +1,5 @@
-// Package plugindemo extracts a tenant from the request host for upstream services.
-package plugindemo
+// Package traefik_subdomain_plugin extracts a tenant from the request host for upstream services.
+package traefik_subdomain_plugin
 
 import (
 	"context"

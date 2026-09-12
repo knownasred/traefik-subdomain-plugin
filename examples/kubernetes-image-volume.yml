@@ -1,0 +1,20 @@
+# Merge into your existing Traefik Deployment; this is a Pod template fragment.
+# Preserve its existing containers, args, mounts, and volumes.
+spec:
+  template:
+    spec:
+      containers:
+        - name: traefik
+          # Traefik resolves plugins-local relative to its working directory.
+          workingDir: /
+          args:
+            - --experimental.localplugins.kepaTenant.modulename=github.com/knownasred/traefik-subdomain-plugin
+          volumeMounts:
+            - name: kepa-plugin
+              mountPath: /plugins-local/src/github.com/knownasred/traefik-subdomain-plugin
+              readOnly: true
+      volumes:
+        - name: kepa-plugin
+          image:
+            reference: ghcr.io/knownasred/traefik-subdomain-plugin:latest
+            pullPolicy: Always
